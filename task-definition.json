@@ -1,0 +1,53 @@
+{
+  "family": "django-polls-app",
+  "taskRoleArn": "arn:aws:iam::859666865623:role/service-role/ecsTaskExecutionRole",
+  "executionRoleArn": "arn:aws:iam::859666865623:role/service-role/ecsTaskExecutionRole",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": [
+    "FARGATE"
+  ],
+  "cpu": "256",
+  "memory": "512",
+  "containerDefinitions": [
+    {
+      "name": "django-app",
+      "image": "859666865623.dkr.ecr.ap-south-1.amazonaws.com/django:latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8000,
+          "hostPort": 8000,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        {
+          "name": "DEBUG",
+          "value": "False"
+        },
+        {
+          "name": "ALLOWED_HOSTS",
+          "value": "*"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/django-polls-app",
+          "awslogs-region": "ap-south-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      },
+      "healthCheck": {
+        "command": [
+          "CMD-SHELL",
+          "curl -f http://localhost:8000/health/ || exit 1"
+        ],
+        "interval": 30,
+        "timeout": 10,
+        "retries": 3,
+        "startPeriod": 60
+      }
+    }
+  ]
+}
