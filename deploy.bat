@@ -88,6 +88,19 @@ if %ERRORLEVEL% neq 0 (
 echo ✅ Image pushed to ECR with tags: %IMAGE_TAG% and latest
 echo.
 
+echo 🔧 Updating task definition with new image...
+set NEW_IMAGE=%ACCOUNT_ID%.dkr.ecr.%AWS_REGION%.amazonaws.com/%ECR_REPO%:latest
+
+REM Update the image in task-definition.json
+echo Updating task-definition.json with image: %NEW_IMAGE%
+powershell -Command "$content = Get-Content 'task-definition.json' -Raw; $content = $content -replace '(?s)\"image\":\s*\"[^\"]*\"', '\"image\": \"%NEW_IMAGE%\"'; Set-Content 'task-definition.json' $content"
+
+REM Verify the update worked
+echo Verifying task definition update...
+type task-definition.json | findstr /c:"image"
+echo ✅ Task definition updated with new image
+echo.
+
 REM Step 2: Create ECS infrastructure
 echo ====================================================
 echo 🏗️ Step 2: Creating ECS infrastructure
@@ -231,7 +244,12 @@ del temp_service_check.txt 2>nul
 if defined SERVICE_EXISTS (
     if not "%SERVICE_EXISTS%"=="None" (
         echo 📋 Service exists, updating with new task definition...
-        aws ecs update-service --cluster %CLUSTER_NAME% --service %SERVICE_NAME% --task-definition %TASK_FAMILY% --force-new-deployment --region %AWS_REGION% --no-cli-pager >nul
+
+        REM Get the latest task definition revision that was just created
+        for /f "tokens=*" %%i in ('aws ecs describe-task-definition --task-definition %TASK_FAMILY% --region %AWS_REGION% --query "taskDefinition.revision" --output text') do set LATEST_REVISION=%%i
+
+        echo 📋 Updating to task definition: %TASK_FAMILY%:%LATEST_REVISION%
+        aws ecs update-service --cluster %CLUSTER_NAME% --service %SERVICE_NAME% --task-definition %TASK_FAMILY%:%LATEST_REVISION% --force-new-deployment --region %AWS_REGION% --no-cli-pager >nul
         if %ERRORLEVEL% neq 0 (
             echo ❌ ECS service update failed
             pause
@@ -274,6 +292,7 @@ echo ====================================================
 echo 🎉 DEPLOYMENT COMPLETE!
 echo ====================================================
 echo Deployment Version: %IMAGE_TAG%
+echo Image: %ACCOUNT_ID%.dkr.ecr.%AWS_REGION%.amazonaws.com/%ECR_REPO%:%IMAGE_TAG%
 echo.
 
 echo 🌐 Your Django application is now live at:

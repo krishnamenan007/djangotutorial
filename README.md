@@ -70,6 +70,28 @@ redeploy.bat
 cleanup.bat
 ```
 
+## 🗃️ Database Management
+
+### Automatic Setup (Built-in)
+✅ **Database migrations** run automatically during container startup
+✅ **Static files** are collected automatically
+✅ **Cache tables** are created automatically
+✅ **Gunicorn server** runs in production mode
+
+### Manual Commands (If Needed)
+```cmd
+# Run additional Django commands on running tasks
+migrate.bat                    # Run migrations
+run-command.bat "python manage.py createsuperuser"  # Create admin user
+```
+
+### Migration Strategy
+- **Automatic**: All setup happens during container startup (`entrypoint.sh`)
+- **Zero-touch**: No manual intervention required after deployment
+- **Production-ready**: Uses Gunicorn WSGI server instead of development server
+
+**Note**: Container startup handles all Django setup automatically!
+
 ## 🔄 Redeployment Process
 
 When you make code changes and want to deploy the latest version:
