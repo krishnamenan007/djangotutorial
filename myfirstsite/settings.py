@@ -10,7 +10,11 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
+import os
+import json
 from pathlib import Path
+import boto3
+from botocore.exceptions import ClientError
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -20,12 +24,18 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/6.0/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-nh4@#yy532y@c86g5vb*%43ymjl#su9!@e%056r*zrz^!bh_g4'
+SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-nh4@#yy532y@c86g5vb*%43ymjl#su9!@e%056r*zrz^!bh_g4')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.environ.get('DEBUG', 'True').lower() == 'true'
 
-ALLOWED_HOSTS = ['*']  # Configure this properly for production
+# Production environment detection
+IS_PRODUCTION = os.environ.get('ENVIRONMENT') == 'production'
+
+if IS_PRODUCTION:
+    ALLOWED_HOSTS = ['*']  # Will be restricted by ALB
+else:
+    ALLOWED_HOSTS = ['*']  # Development - allow all
 
 
 # Application definition
@@ -74,11 +84,47 @@ WSGI_APPLICATION = 'myfirstsite.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+def get_db_config():
+    """Get database configuration from AWS Secrets Manager in production"""
+    if IS_PRODUCTION:
+        try:
+            # Create a Secrets Manager client
+            session = boto3.session.Session()
+            client = session.client(
+                service_name='secretsmanager',
+                region_name=os.environ.get('AWS_REGION', 'ap-south-1')
+            )
+
+            secret_name = os.environ.get('DB_SECRET_NAME', 'django/db-creds')
+            get_secret_value_response = client.get_secret_value(SecretId=secret_name)
+
+            if 'SecretString' in get_secret_value_response:
+                secret = json.loads(get_secret_value_response['SecretString'])
+                return {
+                    'ENGINE': 'django.db.backends.postgresql',
+                    'NAME': secret.get('dbname', 'postgres'),
+                    'USER': secret.get('username'),
+                    'PASSWORD': secret.get('password'),
+                    'HOST': secret.get('host'),
+                    'PORT': secret.get('port', '5432'),
+                }
+        except (ClientError, json.JSONDecodeError, KeyError) as e:
+            print(f"Error retrieving database credentials from Secrets Manager: {e}")
+            # Fallback to environment variables
+            pass
+
+    # Development or fallback configuration
+    return {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': os.environ.get('POSTGRES_DB', 'djangotutorial'),
+        'USER': os.environ.get('POSTGRES_USER', 'postgres'),
+        'PASSWORD': os.environ.get('POSTGRES_PASSWORD', 'password'),
+        'HOST': os.environ.get('POSTGRES_HOST', 'localhost'),
+        'PORT': os.environ.get('POSTGRES_PORT', '5432'),
     }
+
+DATABASES = {
+    'default': get_db_config()
 }
 
 

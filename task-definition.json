@@ -28,6 +28,22 @@
         {
           "name": "ALLOWED_HOSTS",
           "value": "*"
+        },
+        {
+          "name": "ENVIRONMENT",
+          "value": "production"
+        },
+        {
+          "name": "DB_SECRET_NAME",
+          "value": "django/db-creds"
+        },
+        {
+          "name": "AWS_REGION",
+          "value": "ap-south-1"
+        },
+        {
+          "name": "SECRET_KEY",
+          "value": "django-insecure-production-key-change-this-in-production"
         }
       ],
       "logConfiguration": {
@@ -51,5 +67,9 @@
     }
   ]
 }
+
+
+
+
 
 

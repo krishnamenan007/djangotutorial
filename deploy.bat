@@ -19,6 +19,16 @@ set LOG_GROUP_NAME=/ecs/django-polls-app
 set SUBNET_IDS=subnet-0cc87b494e6e7cbf7,subnet-0f0887d766ede8be1
 set VPC_ID=vpc-00bbfbdd0f8cfc2d4
 
+REM RDS Configuration
+set RDS_INSTANCE_NAME=django-postgres
+set RDS_DB_NAME=postgres
+set RDS_USERNAME=djangoadmin
+set RDS_PASSWORD=changeme123!
+set DB_SUBNET_GROUP=django-private-subnet-group
+set RDS_SG_NAME=django-rds-sg
+set DB_SECRET_NAME=django/db-creds
+set PRIVATE_SUBNET_IDS=subnet-0a44b8c8462b8e57c,subnet-0f87d8d64a5e468d6
+
 REM Generate timestamp for versioning
 for /f "tokens=2 delims==" %%i in ('wmic os get localdatetime /value') do set datetime=%%i
 set TIMESTAMP=%datetime:~0,8%-%datetime:~8,6%
@@ -101,9 +111,95 @@ type task-definition.json | findstr /c:"image"
 echo ✅ Task definition updated with new image
 echo.
 
-REM Step 2: Create ECS infrastructure
+REM Step 2: Create Database infrastructure
 echo ====================================================
-echo 🏗️ Step 2: Creating ECS infrastructure
+echo 🗄️ Step 2: Creating Database infrastructure
+echo ====================================================
+echo.
+
+echo 📋 Checking/creating DB subnet group...
+aws rds describe-db-subnet-groups --db-subnet-group-name %DB_SUBNET_GROUP% --region %AWS_REGION% 2>nul >nul
+if %ERRORLEVEL% equ 0 (
+    echo ✅ DB subnet group exists
+) else (
+    echo 📋 Creating DB subnet group...
+    aws rds create-db-subnet-group --db-subnet-group-name %DB_SUBNET_GROUP% --db-subnet-group-description "Private subnets for Django PostgreSQL RDS" --subnet-ids %PRIVATE_SUBNET_IDS% --region %AWS_REGION%
+    if %ERRORLEVEL% neq 0 (
+        echo ❌ DB subnet group creation failed
+        pause
+        exit /b 1
+    )
+    echo ✅ DB subnet group created
+)
+echo.
+
+echo 🔒 Checking RDS security group...
+aws ec2 describe-security-groups --filters "Name=group-name,Values=%RDS_SG_NAME%" "Name=vpc-id,Values=%VPC_ID%" --region %AWS_REGION% --query SecurityGroups[0].GroupId --output text 2>nul > temp_rds_sg.txt
+set /p RDS_SG_ID=<temp_rds_sg.txt 2>nul
+if defined RDS_SG_ID (
+    if not "%RDS_SG_ID%"=="None" (
+        echo ✅ RDS security group exists: %RDS_SG_ID%
+        goto rds_sg_ready
+    )
+)
+
+echo 📋 Creating RDS security group...
+aws ec2 create-security-group --group-name %RDS_SG_NAME% --description "Security group for Django PostgreSQL RDS" --vpc-id %VPC_ID% --region %AWS_REGION% --query GroupId --output text > temp_rds_sg.txt
+set /p RDS_SG_ID=<temp_rds_sg.txt
+del temp_rds_sg.txt
+echo ✅ RDS security group created: %RDS_SG_ID%
+
+:rds_sg_ready
+echo.
+
+echo 🗄️ Checking/creating RDS instance...
+aws rds describe-db-instances --db-instance-identifier %RDS_INSTANCE_NAME% --region %AWS_REGION% --query 'DBInstances[0].DBInstanceStatus' --output text 2>nul > temp_rds_status.txt
+set /p RDS_STATUS=<temp_rds_status.txt 2>nul
+if defined RDS_STATUS (
+    if not "%RDS_STATUS%"=="None" (
+        echo ✅ RDS instance exists (status: %RDS_STATUS%)
+        goto rds_ready
+    )
+)
+
+echo 📋 Creating RDS PostgreSQL instance...
+aws rds create-db-instance --db-instance-identifier %RDS_INSTANCE_NAME% --db-instance-class db.t3.micro --engine postgres --master-username %RDS_USERNAME% --master-user-password %RDS_PASSWORD% --allocated-storage 20 --db-subnet-group-name %DB_SUBNET_GROUP% --vpc-security-group-ids %RDS_SG_ID% --backup-retention-period 0 --region %AWS_REGION% --no-publicly-accessible
+if %ERRORLEVEL% neq 0 (
+    echo ❌ RDS instance creation failed
+    del temp_rds_status.txt 2>nul
+    pause
+    exit /b 1
+)
+echo ✅ RDS instance creation initiated
+del temp_rds_status.txt 2>nul
+
+echo ⏳ Waiting for RDS instance to be available (this may take 5-10 minutes)...
+aws rds wait db-instance-available --db-instance-identifier %RDS_INSTANCE_NAME% --region %AWS_REGION%
+echo ✅ RDS instance is available
+
+:rds_ready
+echo.
+
+echo 🔑 Setting up database credentials in Secrets Manager...
+aws secretsmanager describe-secret --secret-id %DB_SECRET_NAME% --region %AWS_REGION% 2>nul >nul
+if %ERRORLEVEL% equ 0 (
+    echo ✅ Database secret exists
+) else (
+    echo 📋 Creating database secret...
+    for /f "tokens=*" %%i in ('aws rds describe-db-instances --db-instance-identifier %RDS_INSTANCE_NAME% --region %AWS_REGION% --query "DBInstances[0].Endpoint.Address" --output text') do set RDS_ENDPOINT=%%i
+    aws secretsmanager create-secret --name %DB_SECRET_NAME% --description "Database credentials for Django PostgreSQL RDS" --secret-string "{\"username\":\"%RDS_USERNAME%\",\"password\":\"%RDS_PASSWORD%\",\"engine\":\"postgres\",\"host\":\"%RDS_ENDPOINT%\",\"port\":\"5432\",\"dbname\":\"%RDS_DB_NAME%\"}" --region %AWS_REGION%
+    if %ERRORLEVEL% neq 0 (
+        echo ❌ Database secret creation failed
+        pause
+        exit /b 1
+    )
+    echo ✅ Database secret created
+)
+echo.
+
+REM Step 3: Create ECS infrastructure
+echo ====================================================
+echo 🏗️ Step 3: Creating ECS infrastructure
 echo ====================================================
 echo.
 
@@ -127,9 +223,9 @@ if %ERRORLEVEL% neq 0 (
 echo ✅ Task definition registered
 echo.
 
-REM Step 3: Create target group
+REM Step 4: Create target group
 echo ====================================================
-echo 🎯 Step 3: Creating target group
+echo 🎯 Step 4: Creating target group
 echo ====================================================
 echo.
 
@@ -152,9 +248,9 @@ if %ERRORLEVEL% equ 0 (
 )
 echo.
 
-REM Step 4: Create security groups
+REM Step 5: Create security groups
 echo ====================================================
-echo 🔒 Step 4: Creating security groups
+echo 🔒 Step 5: Creating security groups
 echo ====================================================
 echo.
 
@@ -202,12 +298,13 @@ echo ✅ ECS security group created: %ECS_SG_ID%
 :ecs_sg_ready
 echo 📥 Configuring ECS security group rules...
 aws ec2 authorize-security-group-ingress --group-id %ECS_SG_ID% --protocol tcp --port 8000 --source-group %ALB_SG_ID% --region %AWS_REGION% 2>nul
-echo ✅ ECS security group configured
+aws ec2 authorize-security-group-ingress --group-id %RDS_SG_ID% --protocol tcp --port 5432 --source-group %ECS_SG_ID% --region %AWS_REGION% 2>nul
+echo ✅ Security groups configured (ECS can access RDS)
 echo.
 
-REM Step 5: Create ALB
+REM Step 6: Create ALB
 echo ====================================================
-echo 🌐 Step 5: Creating Application Load Balancer
+echo 🌐 Step 6: Creating Application Load Balancer
 echo ====================================================
 echo.
 
@@ -230,9 +327,9 @@ del temp_alb_dns.txt
 echo 🌐 ALB DNS: %ALB_DNS%
 echo.
 
-REM Step 6: Create or update ECS service
+REM Step 7: Create or update ECS service
 echo ====================================================
-echo 🚀 Step 6: Deploying ECS service
+echo 🚀 Step 7: Deploying ECS service
 echo ====================================================
 echo.
 
@@ -272,9 +369,9 @@ echo ✅ ECS service created
 :wait_for_service
 echo.
 
-REM Step 7: Wait for service to be stable
+REM Step 8: Wait for service to be stable
 echo ====================================================
-echo ⏳ Step 7: Waiting for deployment to complete
+echo ⏳ Step 8: Waiting for deployment to complete
 echo ====================================================
 echo.
 
@@ -287,7 +384,7 @@ if %ERRORLEVEL% neq 0 (
 )
 echo.
 
-REM Step 8: Final status check
+REM Step 9: Final status check
 echo ====================================================
 echo 🎉 DEPLOYMENT COMPLETE!
 echo ====================================================

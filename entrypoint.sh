@@ -3,11 +3,7 @@ set -e
 
 echo "🚀 Starting Django Application..."
 
-# Ensure clean database start (remove old SQLite file if exists)
-echo "🗑️  Preparing database..."
-rm -f db.sqlite3
-
-# Run database migrations (fresh database each time)
+# Run database migrations
 echo "📊 Running database migrations..."
 python manage.py migrate --noinput --verbosity=1
 
